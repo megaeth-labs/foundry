@@ -58,4 +58,4 @@ jobs:
       - name: Build
         run: cargo build --workspace
       - name: Run Test
-        run: cargo nextest run --workspace --exclude anvil -E 'not (package(cast) & binary(cli))'
+        run: cargo nextest run --workspace --exclude anvil --no-fail-fast
