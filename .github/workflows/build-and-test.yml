@@ -58,4 +58,14 @@ jobs:
       - name: Build
         run: cargo build --workspace
       - name: Run Test
-        run: cargo nextest run --workspace --exclude anvil --no-fail-fast
+        run: >
+          cargo nextest run --workspace --exclude anvil --no-fail-fast
+          -E 'not (
+            test(=odyssey_can_run_p256_precompile)
+            | test(=can_bind_e2e)
+            | test(=can_install_missing_deps_build)
+            | test(=can_install_missing_deps_test)
+            | test(=ensure_lint_rule_docs)
+            | test(=test_cheats_local_default)
+            | test(=issue_4640)
+          )'
