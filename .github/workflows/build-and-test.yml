@@ -48,9 +48,9 @@ jobs:
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "<>"
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Build
         run: cargo build --workspace
       - name: Run Test
-        run: cargo test --workspace --exclude anvil
-        env:
-          RUST_MIN_STACK: 33554432
+        run: cargo nextest run --workspace --exclude anvil
