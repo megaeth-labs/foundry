@@ -10,21 +10,41 @@ MegaETH's fork of [Foundry](https://github.com/foundry-rs/foundry), pinned at **
 
 ```bash
 # Build
-cargo build
-cargo build --release                     # optimized build
+make build
+make build-release                        # optimized build
 
 # Test
-cargo test --workspace                    # all tests
-cargo test -p forge                       # forge only
+make test-forge                           # forge only
+make test                                 # CI-equivalent workspace tests
 
 # Check compiler errors (preferred over clippy for quick checks)
-cargo check
-cargo check -p forge
+make check
+make check-forge
 
 # Lint (CI runs all of these)
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features
+make fmt
+make clippy
+make lint
+
+# Local pre-PR checks
+make pr
 ```
+
+CI installs the Rust toolchain, the Foundry toolchain, `cargo-nextest`, Python 3.11, and `vyper==0.4.3`.
+Keep the `make test` command in sync with `.github/workflows/build-and-test.yml`.
+
+## Workspace Structure
+
+| Crate        | Path                 | Purpose                                            |
+| ------------ | -------------------- | -------------------------------------------------- |
+| `forge`      | `crates/forge`       | Solidity testing, build, coverage, and script CLI  |
+| `cast`       | `crates/cast`        | Ethereum RPC and utility CLI                       |
+| `anvil`      | `crates/anvil`       | Local Ethereum development node                    |
+| `chisel`     | `crates/chisel`      | Solidity REPL                                      |
+| `cheatcodes` | `crates/cheatcodes`  | Foundry cheatcode implementations                  |
+| `evm`        | `crates/evm`         | EVM execution, traces, coverage, and fuzz helpers  |
+| `config`     | `crates/config`      | Foundry configuration parsing and defaults         |
+| `test-utils` | `crates/test-utils`  | Shared Rust test utilities and RPC helpers         |
 
 ## Version Control
 
@@ -66,6 +86,13 @@ When a PR creation is requested, the agent should:
    In the PR description, make sure a `Summary` section is put on the top.
    The PR will be merged with `Squash and Merge` operation, whose commit description should include the summary.
 
+### Implementing features or bug fixes
+
+When the agent is requested to implement a new feature or bug fix, it should consider the following additional aspects in addition to the feature/fix itself and the other requirements by the user.
+
+1. Should the documentation need to be updated or added?
+2. Are there sufficient tests for this feature?
+
 ## Caveats for Agents
 
 - **Follow existing Foundry patterns.**
@@ -76,7 +103,13 @@ When a PR creation is requested, the agent should:
 - **Use `cargo check` (not `cargo clippy`) for compiler error checking.**
   Use `cargo clippy` only when specifically checking lint warnings.
 - **Before finishing a change, always run full lint and format checks.**
-  Run `cargo clippy --workspace --all-targets --all-features` before completion.
-  Run `cargo fmt --all --check` before completion.
+  Run `make lint` before completion.
+- **Do NOT modify upstream RPC endpoints or test infrastructure without checking upstream first.**
+  Test utilities (e.g., `crates/test-utils/src/rpc.rs`) use public RPC endpoints that may change over time.
+  Always compare with the latest upstream before modifying.
+- **Do NOT change pinned execution dependencies without explicit justification.**
+  Changes to `revm`, `op-revm`, `alloy-evm`, `alloy`, or `[patch.crates-io]` must explain why the fork needs them and what tests cover the change.
 - **One sentence, one line.**
   When writing markdown or similar format files, put each sentence in a separate line.
+- **Review guidelines are in `REVIEW.md`.**
+  Refer to it for code review conventions and fork-specific review rules.

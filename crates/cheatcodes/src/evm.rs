@@ -1019,7 +1019,8 @@ fn inner_start_gas_snapshot(
     name: Option<String>,
 ) -> Result {
     // Revert if there is an active gas snapshot as we can only have one active snapshot at a time.
-    if let Some((group, name)) = &ccx.state.gas_metering.active_gas_snapshot {
+    if ccx.state.gas_metering.active_gas_snapshot.is_some() {
+        let (group, name) = ccx.state.gas_metering.active_gas_snapshot.as_ref().unwrap().clone();
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 

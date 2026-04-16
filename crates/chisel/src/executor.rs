@@ -536,22 +536,22 @@ enum Type {
     Builtin(DynSolType),
 
     /// (type)
-    Array(Box<Self>),
+    Array(Box<Type>),
 
     /// (type, length)
-    FixedArray(Box<Self>, usize),
+    FixedArray(Box<Type>, usize),
 
     /// (type, index)
-    ArrayIndex(Box<Self>, Option<usize>),
+    ArrayIndex(Box<Type>, Option<usize>),
 
     /// (types)
-    Tuple(Vec<Option<Self>>),
+    Tuple(Vec<Option<Type>>),
 
     /// (name, params, returns)
-    Function(Box<Self>, Vec<Option<Self>>, Vec<Option<Self>>),
+    Function(Box<Type>, Vec<Option<Type>>, Vec<Option<Type>>),
 
     /// (lhs, rhs)
-    Access(Box<Self>, String),
+    Access(Box<Type>, String),
 
     /// (types)
     Custom(Vec<String>),
