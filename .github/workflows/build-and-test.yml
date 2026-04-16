@@ -1,0 +1,73 @@
+name: Build & Test
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUST_MIN_STACK: 4194304
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Run Fmt
+        run: cargo fmt --all --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Vyper
+        run: pip install vyper==0.4.3
+      - name: Setup Git config
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Build
+        run: cargo build --workspace
+      - name: Run Test
+        run: >
+          cargo nextest run --workspace --exclude anvil --no-fail-fast
+          -E 'not (
+            test(~odyssey_can_run_p256_precompile)
+            | test(~can_bind_e2e)
+            | test(~can_install_missing_deps_build)
+            | test(~can_install_missing_deps_test)
+            | test(~ensure_lint_rule_docs)
+            | test(=cheats::test_cheats_local_default)
+            | test(~issue_4640)
+          )'
