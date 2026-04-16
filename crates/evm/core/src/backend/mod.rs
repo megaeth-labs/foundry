@@ -540,7 +540,13 @@ impl Backend {
         }
     }
 
-    /// Enable MegaETH EVM semantics for subsequent [`Backend::inspect`] calls.
+    /// Mark this backend as MegaETH-enabled.
+    ///
+    /// This is a flag read by [`crate::executors::Executor`] to dispatch to
+    /// [`Backend::inspect_mega`] instead of [`Backend::inspect`]. Calling
+    /// [`Backend::inspect`] directly ignores this flag and always runs the
+    /// stock revm path — use [`Backend::inspect_mega`] explicitly when
+    /// bypassing the executor.
     pub fn set_megaeth(&mut self, enabled: bool) {
         self.is_megaeth = enabled;
     }
@@ -773,20 +779,18 @@ impl Backend {
 
     /// Executes the configured test call of the `env` without committing state changes.
     ///
+    /// Runs the stock revm path regardless of [`Backend::is_megaeth`]; callers that want
+    /// MegaETH semantics must route to [`Backend::inspect_mega`] themselves.
+    ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: InspectorExt + for<'a> revm::Inspector<crate::evm::MegaCtx<'a>>>(
+    pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut Env,
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-
-        if self.is_megaeth {
-            trace!(target: "backend", "MegaETH mode: routing to inspect_mega");
-            return self.inspect_mega(env, inspector);
-        }
 
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
@@ -797,8 +801,16 @@ impl Backend {
         Ok(res)
     }
 
+    /// Whether this backend is marked for MegaETH execution.
+    ///
+    /// Read by [`crate::executors::Executor`] to route to [`Backend::inspect_mega`].
+    /// [`Backend::inspect`] does not consult this flag.
+    pub fn is_megaeth(&self) -> bool {
+        self.is_megaeth
+    }
+
     /// Execute a transaction using MegaETH EVM semantics.
-    pub(crate) fn inspect_mega<I: for<'a> revm::Inspector<crate::evm::MegaCtx<'a>>>(
+    pub fn inspect_mega<I: for<'a> revm::Inspector<crate::evm::MegaCtx<'a>>>(
         &mut self,
         env: &mut Env,
         inspector: &mut I,

@@ -98,6 +98,42 @@ Error: `--isolate` is not supported with `--megaeth` (MegaETH v1 does not implem
 "#]]);
 });
 
+// Exercises the read-only `call_raw` / `call_sol_default` path under --megaeth
+// (fuzz harness → `Executor::call_raw` → `CowBackend::inspect_mega`). The regular
+// `transact_with_env` path is covered by `megaeth_basic_pass` and `megaeth_cross_validate`;
+// this test guards against regressions specific to the read-only dispatch.
+forgetest_init!(megaeth_fuzz_call_raw, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "FuzzCallRaw.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Target {
+    function identity(uint128 x) external pure returns (uint128) {
+        return x;
+    }
+}
+
+contract FuzzCallRawTest is Test {
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+    }
+
+    function testFuzz_identity(uint128 x) public view {
+        require(target.identity(x) == x, "identity broke");
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--megaeth", "--match-test", "testFuzz_identity"]).assert_success();
+});
+
 // Basic sanity: --megaeth alone works for simple tests.
 forgetest_init!(megaeth_basic_pass, |prj, cmd| {
     prj.wipe_contracts();

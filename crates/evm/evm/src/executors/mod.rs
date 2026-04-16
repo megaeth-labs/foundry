@@ -491,7 +491,11 @@ impl Executor {
     pub fn call_with_env(&self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut env, &mut inspector)?;
+        let result = if self.backend().is_megaeth() {
+            backend.inspect_mega(&mut env, &mut inspector)?
+        } else {
+            backend.inspect(&mut env, &mut inspector)?
+        };
         convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())
     }
 
@@ -500,7 +504,11 @@ impl Executor {
     pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let backend = self.backend_mut();
-        let result = backend.inspect(&mut env, &mut inspector)?;
+        let result = if backend.is_megaeth() {
+            backend.inspect_mega(&mut env, &mut inspector)?
+        } else {
+            backend.inspect(&mut env, &mut inspector)?
+        };
         let mut result =
             convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
