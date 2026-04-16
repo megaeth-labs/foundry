@@ -111,9 +111,6 @@ impl Default for EvmOpts {
 
 impl EvmOpts {
     /// Rejects flag combinations that MegaETH v1 does not support.
-    ///
-    /// Must be called before any network request (e.g. `evm_env().await`) so that
-    /// misconfigured invocations fail fast and without side effects.
     pub fn validate_megaeth(&self) -> eyre::Result<()> {
         if !self.megaeth {
             return Ok(());

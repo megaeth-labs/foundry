@@ -137,7 +137,7 @@ This fork adds `forge test --megaeth` and `forge coverage --megaeth`, routing ex
 - **`mega-evm` version is pinned.**
   Bumping it requires updating the `MEGA_EVME_VERSION` constant in `crates/forge/tests/cli/megaeth.rs` AND the hardcoded reference values in `testdata/megaeth/test/CrossValidate.t.sol` (e.g. `MEGA_EVME_REFERENCE_GAS = 95086`).
   Run `cargo nextest run -p forge --test cli megaeth_live_cross_validate --run-ignored=only` locally to regenerate.
-- **`--megaeth` + `--isolate` / `--fork-url` must stay rejected.**
+- **`--megaeth` + `--isolate` / `--fork-url` / `--gas-report` must stay rejected.**
   Silent degradation is worse than a hard error.
   Any new code path that builds a runner or executes tests under MegaETH must call `EvmOpts::validate_megaeth()` before any network request.
 - **Cheatcodes are skipped under `--megaeth`.**
@@ -145,3 +145,6 @@ This fork adds `forge test --megaeth` and `forge coverage --megaeth`, routing ex
 - **System contract deployment must be idempotent.**
   `Backend::ensure_system_contract` checks `code_hash` before writing and preserves existing `balance` / `nonce`.
   Mirrors mega-evme's pattern — do not revert to `AccountInfo::default()`.
+- **`MegaCtx<'a, E>` is generic over the external-env provider.**
+  Defaults to `TestExternalEnvs` (empty oracle, `MIN_BUCKET_SIZE` SALT buckets).
+  A fork-backed implementation should plug in as `MegaCtx<'_, ForkExternalEnvs>` rather than replacing the alias — inspector impls are `impl<E: ExternalEnvTypes> Inspector<MegaCtx<'_, E>>`.

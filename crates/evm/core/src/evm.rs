@@ -15,10 +15,15 @@ use alloy_evm::{
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 // MegaETH EVM types
-pub use mega_evm::{EmptyExternalEnv, MegaContext, MegaEvmFactory, MegaHaltReason, MegaSpecId};
+pub use mega_evm::{ExternalEnvTypes, MegaContext, MegaHaltReason, MegaSpecId};
 
 /// Type alias for the MegaETH context used throughout Foundry.
-pub type MegaCtx<'a> = MegaContext<&'a mut dyn DatabaseExt, mega_evm::TestExternalEnvs>;
+///
+/// `E` is the external-env provider (SALT bucket + Oracle); defaults to
+/// `TestExternalEnvs` for local execution. A fork-backed implementation can be
+/// plugged in via `MegaCtx<'_, ForkExternalEnvs>` without touching the
+/// inspector stack.
+pub type MegaCtx<'a, E = mega_evm::TestExternalEnvs> = MegaContext<&'a mut dyn DatabaseExt, E>;
 
 use revm::{
     Context, Journal,
@@ -462,9 +467,8 @@ pub fn convert_mega_result_and_state(
                 | MegaHaltReason::VolatileDataAccessOutOfGas { .. } => {
                     HaltReason::OutOfGas(OutOfGasError::Basic)
                 }
-                MegaHaltReason::SystemTxInvalidCallee { .. } => {
-                    HaltReason::CallNotAllowedInsideStatic
-                }
+                // MegaETH-specific; no direct revm equivalent.
+                MegaHaltReason::SystemTxInvalidCallee { .. } => HaltReason::NotActivated,
             };
             ExecutionResult::Halt { reason: mapped, gas_used }
         }

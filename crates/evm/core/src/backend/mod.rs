@@ -435,7 +435,7 @@ struct _ObjectSafe(dyn DatabaseExt);
 #[must_use]
 pub struct Backend {
     /// Whether this backend runs with MegaETH EVM semantics.
-    pub is_megaeth: bool,
+    pub(crate) is_megaeth: bool,
     /// The access point for managing forks
     forks: MultiFork,
     // The default in memory db
@@ -538,6 +538,11 @@ impl Backend {
             active_fork_ids: None,
             inner: Default::default(),
         }
+    }
+
+    /// Enable MegaETH EVM semantics for subsequent [`Backend::inspect`] calls.
+    pub fn set_megaeth(&mut self, enabled: bool) {
+        self.is_megaeth = enabled;
     }
 
     pub fn insert_account_info(&mut self, address: Address, account: AccountInfo) {
@@ -793,12 +798,6 @@ impl Backend {
     }
 
     /// Execute a transaction using MegaETH EVM semantics.
-    ///
-    /// Follows the same pattern as mega-evme's `execute_transaction`:
-    /// 1. Build CfgEnv with MegaSpecId
-    /// 2. Create MegaContext with TestExternalEnvs (SALT bucket support)
-    /// 3. Deploy system contracts (Oracle, Timestamp Oracle, Keyless Deploy)
-    /// 4. Create MegaEvm with inspector and execute
     pub(crate) fn inspect_mega<I: for<'a> revm::Inspector<crate::evm::MegaCtx<'a>>>(
         &mut self,
         env: &mut Env,
@@ -809,12 +808,8 @@ impl Backend {
         use revm::InspectEvm;
 
         let spec = MegaSpecId::REX4;
-
-        // Deploy MegaETH system contracts into the database before EVM creation.
-        // These are required for oracle access checks, keyless deploy, etc.
         self.deploy_mega_system_contracts(spec);
 
-        // Build CfgEnv<MegaSpecId>
         let mut mega_cfg = mega_evm::revm::context::CfgEnv::default();
         mega_cfg.chain_id = env.evm_env.cfg_env.chain_id;
         mega_cfg.spec = spec;
@@ -824,7 +819,6 @@ impl Backend {
         mega_cfg.disable_base_fee = env.evm_env.cfg_env.disable_base_fee;
         mega_cfg.disable_eip3607 = env.evm_env.cfg_env.disable_eip3607;
 
-        // Build MegaContext with TestExternalEnvs (SALT bucket + oracle env support)
         let external_envs = TestExternalEnvs::new();
         let db: &mut dyn DatabaseExt = self;
         let ctx = MegaContext::new(db, spec)
@@ -832,30 +826,15 @@ impl Backend {
             .with_block(env.evm_env.block_env.clone())
             .with_external_envs(external_envs.into());
 
-        // Build MegaTransaction from Foundry TxEnv
         let mega_tx = MegaTransaction { base: env.tx.clone(), ..Default::default() };
-
-        // Create MegaEvm with inspector and execute (matches mega-evme pattern)
         let mut evm = MegaEvm::new(ctx).with_inspector(inspector);
-        trace!(target: "backend", "MegaEVM created with MegaSpecId::REX4, system contracts deployed");
-
         let res = evm.inspect_tx(mega_tx).map_err(|e| eyre::eyre!("MegaETH EVM error: {e}"))?;
 
         Ok(convert_mega_result_and_state(res))
     }
 
-    /// Deploy MegaETH system contracts into the database.
-    ///
-    /// Follows mega-evme's idempotent `deploy_system_contracts()` pattern:
-    /// - Checks code_hash first; skips if already correct.
-    /// - Preserves existing balance/nonce via `unwrap_or_default()`.
-    ///
-    /// Contracts:
-    /// - MiniRex+: Oracle Contract (v1.0.0 pre-Rex2, v1.1.0 Rex2+)
-    /// - MiniRex+: High Precision Timestamp Oracle
-    /// - Rex2+: Keyless Deploy Contract
-    // TODO: Replace with `mega_evm::system_contracts(spec)` once mega-evm exposes a
-    // spec-based system contract list.
+    /// Deploy MegaETH system contracts (Oracle, HP Timestamp, Keyless Deploy).
+    // TODO: use `mega_evm::system_contracts(spec)` once mega-evm exposes it.
     fn deploy_mega_system_contracts(&mut self, spec: mega_evm::MegaSpecId) {
         use mega_evm::{
             HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS, HIGH_PRECISION_TIMESTAMP_ORACLE_CODE,
@@ -889,8 +868,7 @@ impl Backend {
         trace!(target: "backend", "MegaETH system contracts deployed for spec {:?}", spec);
     }
 
-    /// Idempotently inject a system contract: skip if the code_hash already matches,
-    /// otherwise preserve the existing account's balance/nonce and only update code.
+    /// Deploy `code` at `address` if not already present with the expected hash.
     fn ensure_system_contract(
         &mut self,
         address: Address,
@@ -898,15 +876,12 @@ impl Backend {
         expected_hash: B256,
     ) {
         let existing = self.basic_ref(address).ok().flatten();
-
-        // Already deployed with the correct code — nothing to do.
         if let Some(ref info) = existing
             && info.code_hash == expected_hash
         {
             return;
         }
 
-        // Preserve existing balance/nonce; only patch code.
         let mut info = existing.unwrap_or_default();
         info.code_hash = expected_hash;
         info.code = Some(Bytecode::new_raw(code));

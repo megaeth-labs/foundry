@@ -301,9 +301,6 @@ pub struct TestRunnerConfig {
 impl TestRunnerConfig {
     /// Reconfigures all fields using the given `config`.
     /// This is for example used to override the configuration with inline config.
-    ///
-    /// Returns an error if inline config requests an option that conflicts with
-    /// the current EVM mode (e.g. `isolate = true` under `--megaeth`).
     pub fn reconfigure_with(&mut self, config: Arc<Config>) -> eyre::Result<()> {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
@@ -361,7 +358,7 @@ impl TestRunnerConfig {
     ) -> Executor {
         // Propagate MegaETH flag to Backend
         let mut db = db;
-        db.is_megaeth = self.evm_opts.megaeth;
+        db.set_megaeth(self.evm_opts.megaeth);
 
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
@@ -491,8 +488,6 @@ impl MultiContractRunnerBuilder {
         env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
-        // Last-line defense for programmatic callers that bypass the CLI command
-        // guards. Duplicates `EvmOpts::validate_megaeth`.
         evm_opts.validate_megaeth()?;
         if evm_opts.megaeth && self.isolation {
             eyre::bail!(

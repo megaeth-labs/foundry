@@ -1203,22 +1203,12 @@ impl DerefMut for InspectorStack {
     }
 }
 
-// ---------------------------------------------------------------------------
-// MegaETH Inspector support
-// ---------------------------------------------------------------------------
-//
-// MegaContext wraps OpContext via Deref, giving access to journaled_state, tx, block, cfg.
-// All sub-inspectors (LineCoverage, Tracing, Log, Fuzzer, etc.) are `impl<CTX> Inspector<CTX>`,
-// so they work with MegaContext out of the box. Only Cheatcodes is hardcoded to EthEvmContext,
-// so it is skipped here (v1 limitation — cheatcodes not yet supported under --megaeth).
+// MegaETH Inspector support. Cheatcodes are skipped (hardcoded to EthEvmContext
+// in upstream); all other sub-inspectors work via `impl<CTX> Inspector<CTX>`.
 
-use foundry_evm_core::backend::DatabaseExt as MegaDatabaseExt;
-use mega_evm::{MegaContext, TestExternalEnvs};
+use foundry_evm_core::evm::{ExternalEnvTypes, MegaCtx};
 
-pub type MegaCtx<'a> = MegaContext<&'a mut dyn MegaDatabaseExt, TestExternalEnvs>;
-
-/// Macro analogous to `call_inspectors!` but for MegaContext — calls only the generic
-/// sub-inspectors, deliberately excluding cheatcodes.
+/// Like `call_inspectors!` but for `MegaContext`, excluding cheatcodes.
 macro_rules! call_mega_inspectors {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {
         $(
@@ -1240,8 +1230,8 @@ macro_rules! call_mega_inspectors {
     }};
 }
 
-impl Inspector<MegaCtx<'_>> for InspectorStack {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_>) {
+impl<E: ExternalEnvTypes> Inspector<MegaCtx<'_, E>> for InspectorStack {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>) {
         call_mega_inspectors!(
             [
                 &mut self.inner.line_coverage,
@@ -1254,7 +1244,7 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_>) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>) {
         call_mega_inspectors!(
             [
                 &mut self.inner.fuzzer,
@@ -1269,7 +1259,7 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
         );
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>) {
         call_mega_inspectors!(
             [
                 &mut self.inner.tracer,
@@ -1281,10 +1271,9 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
         );
     }
 
-    // `log.clone()` is required — the macro fans the call out across multiple
-    // inspectors; clippy's redundant-clone heuristic misreads the final use.
+    // The macro fans `log` out across multiple inspectors.
     #[allow(clippy::redundant_clone)]
-    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_>, log: Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>, log: Log) {
         call_mega_inspectors!(
             [
                 &mut self.inner.tracer,
@@ -1296,7 +1285,7 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
         );
     }
 
-    fn call(&mut self, ecx: &mut MegaCtx<'_>, call: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut MegaCtx<'_, E>, call: &mut CallInputs) -> Option<CallOutcome> {
         call_mega_inspectors!(
             #[ret]
             [
@@ -1319,7 +1308,12 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
         None
     }
 
-    fn call_end(&mut self, ecx: &mut MegaCtx<'_>, inputs: &CallInputs, outcome: &mut CallOutcome) {
+    fn call_end(
+        &mut self,
+        ecx: &mut MegaCtx<'_, E>,
+        inputs: &CallInputs,
+        outcome: &mut CallOutcome,
+    ) {
         let result = outcome.result.result;
         call_mega_inspectors!(
             [
@@ -1341,7 +1335,7 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
 
     fn create(
         &mut self,
-        ecx: &mut MegaCtx<'_>,
+        ecx: &mut MegaCtx<'_, E>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         call_mega_inspectors!(
@@ -1359,7 +1353,7 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
 
     fn create_end(
         &mut self,
-        ecx: &mut MegaCtx<'_>,
+        ecx: &mut MegaCtx<'_, E>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -1376,7 +1370,7 @@ impl Inspector<MegaCtx<'_>> for InspectorStack {
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         // Delegates to existing implementation — selfdestruct doesn't take context
         call_mega_inspectors!([&mut self.inner.tracer], |inspector| {
-            Inspector::<MegaCtx<'_>>::selfdestruct(inspector, contract, target, value)
+            Inspector::<MegaCtx<'_, E>>::selfdestruct(inspector, contract, target, value)
         },);
     }
 }
