@@ -209,7 +209,7 @@ impl<'a> ContractRunner<'a> {
     fn apply_contract_inline_config(&mut self) -> Result<()> {
         if self.inline_config.contains_contract(self.name) {
             let new_config = Arc::new(self.inline_config(None)?);
-            self.tcfg.to_mut().reconfigure_with(new_config);
+            self.tcfg.to_mut().reconfigure_with(new_config)?;
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
@@ -491,7 +491,7 @@ impl<'a> FunctionRunner<'a> {
     fn apply_function_inline_config(&mut self, func: &Function) -> Result<()> {
         if self.inline_config.contains_function(self.cr.name, &func.name) {
             let new_config = Arc::new(self.cr.inline_config(Some(func))?);
-            self.tcfg.to_mut().reconfigure_with(new_config);
+            self.tcfg.to_mut().reconfigure_with(new_config)?;
             self.tcfg.configure_executor(self.executor.to_mut());
         }
         Ok(())

@@ -286,6 +286,17 @@ impl TestArgs {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
+        // Reject unsupported MegaETH flag combinations before any network request.
+        // `--gas-report` is checked separately (and before it mutates `isolate` below)
+        // so the error message attributes the cause correctly rather than surfacing
+        // as a confusing "--isolate is not supported" from the builder layer.
+        if evm_opts.megaeth && self.gas_report {
+            eyre::bail!(
+                "`--gas-report` is not supported with `--megaeth` (gas reports require isolation mode, which MegaETH v1 does not implement)"
+            );
+        }
+        evm_opts.validate_megaeth()?;
+
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;

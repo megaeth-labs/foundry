@@ -1,0 +1,92 @@
+name: MegaETH Live Cross-Validation
+
+# Runs the `megaeth_live_cross_validate` test, which installs the upstream
+# `mega-evme` binary from crates.io and executes the same bytecodes through
+# both engines, failing if forge's `--megaeth` output drifts from the library
+# reference.
+#
+# Not in the default Build & Test workflow because the first run compiles
+# mega-evme (revm + alloy, ~2 minutes) and requires network access.
+
+on:
+  schedule:
+    # Daily 00:00 UTC — catches mega-evm version/semantics drift quickly.
+    # With cache hits this runs in ~5 min.
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+  # Trigger on changes to the MegaETH integration code or the test itself.
+  # Errs on the side of over-triggering — the whole point of this workflow is
+  # consistency, so a broad filter is cheaper than missing a drift.
+  pull_request:
+    paths:
+      # Full EVM core + inspectors: backend, inspect_mega, result conversion,
+      # opts (validate_megaeth), inspector stack, etc.
+      - "crates/evm/core/src/**"
+      - "crates/evm/evm/src/**"
+      # Forge command plumbing: test / coverage / multi_runner / runner
+      - "crates/forge/src/cmd/**"
+      - "crates/forge/src/multi_runner.rs"
+      - "crates/forge/src/runner.rs"
+      # CLI flag + config definitions
+      - "crates/common/src/evm.rs"
+      - "crates/config/src/lib.rs"
+      # Tests + fixtures
+      - "crates/forge/tests/cli/megaeth.rs"
+      - "testdata/megaeth/**"
+      # Dependency pins
+      - "Cargo.toml"
+      - "Cargo.lock"
+      # Workflow itself
+      - ".github/workflows/megaeth-live-validate.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUST_MIN_STACK: 4194304
+  MEGA_EVME_VERSION: "1.5.1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      # Cache the `cargo install mega-evme` output so only the first run
+      # (or a version bump) pays the ~2 minute compile cost.
+      - name: Cache mega-evme install
+        id: cache-mega-evme
+        uses: actions/cache@v4
+        with:
+          path: target/mega-evme-${{ env.MEGA_EVME_VERSION }}
+          key: mega-evme-${{ env.MEGA_EVME_VERSION }}-${{ runner.os }}
+
+      - name: Build forge tests
+        run: cargo build -p forge --tests
+
+      # Runs all 8 `megaeth_*` tests, including the normally-ignored
+      # `megaeth_live_cross_validate` (via --run-ignored=all). The live test
+      # installs mega-evme from crates.io on the first run; subsequent runs
+      # hit the cache above.
+      - name: Run megaeth tests (including live cross-validation)
+        run: >
+          cargo nextest run -p forge --test cli
+          -E 'test(~megaeth)'
+          --run-ignored=all
+          --no-fail-fast

@@ -143,6 +143,11 @@ pub struct EvmArgs {
     #[arg(long, alias = "alphanet")]
     #[serde(skip)]
     pub odyssey: bool,
+
+    /// Enable MegaETH EVM semantics for test and coverage.
+    #[arg(long)]
+    #[serde(skip)]
+    pub megaeth: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -171,6 +176,10 @@ impl Provider for EvmArgs {
 
         if self.odyssey {
             dict.insert("odyssey".to_string(), self.odyssey.into());
+        }
+
+        if self.megaeth {
+            dict.insert("megaeth".to_string(), self.megaeth.into());
         }
 
         if self.always_use_create_2_factory {

@@ -64,7 +64,7 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: InspectorExt>(
+    pub fn inspect<I: InspectorExt + for<'db> revm::Inspector<crate::evm::MegaCtx<'db>>>(
         &mut self,
         env: &mut Env,
         inspector: &mut I,
@@ -73,6 +73,11 @@ impl<'a> CowBackend<'a> {
         // already, we reset the initialized state
         self.is_initialized = false;
         self.spec_id = env.evm_env.cfg_env.spec;
+
+        if self.backend.is_megaeth {
+            let backend = self.backend_mut(&env.as_env_mut());
+            return backend.inspect_mega(env, inspector);
+        }
 
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
