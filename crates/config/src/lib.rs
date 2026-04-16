@@ -520,6 +520,9 @@ pub struct Config {
     #[serde(alias = "alphanet")]
     pub odyssey: bool,
 
+    /// Enable MegaETH EVM semantics.
+    pub megaeth: bool,
+
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
 
@@ -2441,6 +2444,7 @@ impl Default for Config {
             warnings: vec![],
             extra_args: vec![],
             odyssey: false,
+            megaeth: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),

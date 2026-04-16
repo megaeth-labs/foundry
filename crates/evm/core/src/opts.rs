@@ -75,6 +75,9 @@ pub struct EvmOpts {
     /// whether to enable Odyssey features.
     pub odyssey: bool,
 
+    /// Enable MegaETH EVM semantics.
+    pub megaeth: bool,
+
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
 }
@@ -100,12 +103,31 @@ impl Default for EvmOpts {
             isolate: false,
             disable_block_gas_limit: false,
             odyssey: false,
+            megaeth: false,
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }
 }
 
 impl EvmOpts {
+    /// Rejects flag combinations that MegaETH v1 does not support.
+    pub fn validate_megaeth(&self) -> eyre::Result<()> {
+        if !self.megaeth {
+            return Ok(());
+        }
+        if self.fork_url.is_some() {
+            eyre::bail!(
+                "`--fork-url` is not supported with `--megaeth` (MegaETH v1 does not implement fork-aware external environments)"
+            );
+        }
+        if self.isolate {
+            eyre::bail!(
+                "`--isolate` is not supported with `--megaeth` (MegaETH v1 does not implement isolation mode)"
+            );
+        }
+        Ok(())
+    }
+
     /// Configures a new `revm::Env`
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain

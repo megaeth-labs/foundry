@@ -61,6 +61,9 @@ impl<'a> CowBackend<'a> {
 
     /// Executes the configured transaction of the `env` without committing state changes
     ///
+    /// Runs the stock revm path regardless of the inner backend's MegaETH flag; callers
+    /// that want MegaETH semantics must route to [`CowBackend::inspect_mega`] themselves.
+    ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
@@ -81,6 +84,18 @@ impl<'a> CowBackend<'a> {
         *env = evm.as_env_mut().to_owned();
 
         Ok(res)
+    }
+
+    /// Execute a transaction using MegaETH EVM semantics.
+    #[instrument(name = "inspect_mega", level = "debug", skip_all)]
+    pub fn inspect_mega<I: for<'db> revm::Inspector<crate::evm::MegaCtx<'db>>>(
+        &mut self,
+        env: &mut Env,
+        inspector: &mut I,
+    ) -> eyre::Result<ResultAndState> {
+        self.is_initialized = false;
+        self.spec_id = env.evm_env.cfg_env.spec;
+        self.backend_mut(&env.as_env_mut()).inspect_mega(env, inspector)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
