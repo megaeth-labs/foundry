@@ -301,8 +301,15 @@ pub struct TestRunnerConfig {
 impl TestRunnerConfig {
     /// Reconfigures all fields using the given `config`.
     /// This is for example used to override the configuration with inline config.
-    pub fn reconfigure_with(&mut self, config: Arc<Config>) {
+    pub fn reconfigure_with(&mut self, config: Arc<Config>) -> eyre::Result<()> {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
+
+        if self.evm_opts.megaeth && config.isolate {
+            eyre::bail!(
+                "inline config sets `isolate = true` but `--megaeth` is enabled \
+                 (MegaETH v1 does not implement isolation mode)"
+            );
+        }
 
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
@@ -317,6 +324,7 @@ impl TestRunnerConfig {
         // self.decode_internal = N/A;
 
         self.config = config;
+        Ok(())
     }
 
     /// Configures the given executor with this configuration.
@@ -348,6 +356,10 @@ impl TestRunnerConfig {
         artifact_id: &ArtifactId,
         db: Backend,
     ) -> Executor {
+        // Propagate MegaETH flag to Backend
+        let mut db = db;
+        db.set_megaeth(self.evm_opts.megaeth);
+
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),
@@ -476,6 +488,13 @@ impl MultiContractRunnerBuilder {
         env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
+        evm_opts.validate_megaeth()?;
+        if evm_opts.megaeth && self.isolation {
+            eyre::bail!(
+                "`--isolate` is not supported with `--megaeth` (MegaETH v1 does not implement isolation mode)"
+            );
+        }
+
         let contracts = output
             .artifact_ids()
             .map(|(id, v)| (id.with_stripped_file_prefixes(root), v))

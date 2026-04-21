@@ -91,6 +91,9 @@ impl CoverageArgs {
     pub async fn run(mut self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
+        // Reject unsupported MegaETH flag combinations before any network request.
+        evm_opts.validate_megaeth()?;
+
         // install missing dependencies
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
@@ -275,6 +278,8 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
+            .enable_isolation(evm_opts.isolate)
+            .odyssey(evm_opts.odyssey)
             .set_coverage(true)
             .build::<MultiCompiler>(root, output, env, evm_opts)?;
 

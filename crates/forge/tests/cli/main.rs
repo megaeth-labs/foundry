@@ -21,6 +21,7 @@ mod geiger;
 mod inline_config;
 mod install;
 mod lint;
+mod megaeth;
 mod multi_script;
 mod script;
 mod soldeer;

@@ -11,3 +11,8 @@ node_modules
 dist
 bin
 _
+
+# testdata/megaeth installs forge-std via `forge install` — keep it untracked.
+/testdata/megaeth/lib/
+/testdata/megaeth/cache/
+/testdata/megaeth/out/

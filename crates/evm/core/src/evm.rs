@@ -14,6 +14,17 @@ use alloy_evm::{
 };
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
+// MegaETH EVM types
+pub use mega_evm::{ExternalEnvTypes, MegaContext, MegaHaltReason, MegaSpecId};
+
+/// Type alias for the MegaETH context used throughout Foundry.
+///
+/// `E` is the external-env provider (SALT bucket + Oracle); defaults to
+/// `TestExternalEnvs` for local execution. A fork-backed implementation can be
+/// plugged in via `MegaCtx<'_, ForkExternalEnvs>` without touching the
+/// inspector stack.
+pub type MegaCtx<'a, E = mega_evm::TestExternalEnvs> = MegaContext<&'a mut dyn DatabaseExt, E>;
+
 use revm::{
     Context, Journal,
     context::{
@@ -421,4 +432,47 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// MegaETH EVM support
+// ---------------------------------------------------------------------------
+
+/// Converts a `ResultAndState` with `MegaHaltReason` to one with standard `HaltReason`.
+///
+/// This is a lossy conversion: Mega-specific resource limit halts are mapped to `OutOfGas`.
+pub fn convert_mega_result_and_state(
+    result: mega_evm::revm::context::result::ResultAndState<MegaHaltReason>,
+) -> ResultAndState {
+    use mega_evm::revm::context::result::ExecutionResult as MegaExecResult;
+    use revm::context::result::OutOfGasError;
+
+    let state = result.state;
+    let exec_result = match result.result {
+        MegaExecResult::Success { reason, gas_used, gas_refunded, logs, output } => {
+            ExecutionResult::Success { reason, gas_used, gas_refunded, logs, output }
+        }
+        MegaExecResult::Revert { gas_used, output } => ExecutionResult::Revert { gas_used, output },
+        MegaExecResult::Halt { reason, gas_used } => {
+            let mapped = match reason {
+                MegaHaltReason::Base(op_halt) => match op_halt {
+                    mega_evm::op_revm::OpHaltReason::Base(eth_halt) => eth_halt,
+                    mega_evm::op_revm::OpHaltReason::FailedDeposit => HaltReason::NotActivated,
+                },
+                // All Mega-specific resource limits → OutOfGas
+                MegaHaltReason::DataLimitExceeded { .. }
+                | MegaHaltReason::KVUpdateLimitExceeded { .. }
+                | MegaHaltReason::ComputeGasLimitExceeded { .. }
+                | MegaHaltReason::StateGrowthLimitExceeded { .. }
+                | MegaHaltReason::VolatileDataAccessOutOfGas { .. } => {
+                    HaltReason::OutOfGas(OutOfGasError::Basic)
+                }
+                // MegaETH-specific; no direct revm equivalent.
+                MegaHaltReason::SystemTxInvalidCallee { .. } => HaltReason::NotActivated,
+            };
+            ExecutionResult::Halt { reason: mapped, gas_used }
+        }
+    };
+
+    ResultAndState { result: exec_result, state }
 }

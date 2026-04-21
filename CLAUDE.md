@@ -113,3 +113,38 @@ When the agent is requested to implement a new feature or bug fix, it should con
   When writing markdown or similar format files, put each sentence in a separate line.
 - **Review guidelines are in `REVIEW.md`.**
   Refer to it for code review conventions and fork-specific review rules.
+
+## MegaETH Integration
+
+This fork adds `forge test --megaeth` and `forge coverage --megaeth`, routing execution through the [`mega-evm`](https://crates.io/crates/mega-evm) library instead of stock revm.
+
+### Where the integration lives
+
+| Concern | Path |
+| --- | --- |
+| EVM execution entry point | `crates/evm/core/src/backend/{mod,cow}.rs` (`inspect_mega`) |
+| MegaCtx inspector fan-out | `crates/evm/evm/src/inspectors/stack.rs` |
+| CLI flag validation | `crates/evm/core/src/opts.rs` (`EvmOpts::validate_megaeth`) |
+| Test / coverage command guards | `crates/forge/src/cmd/{test,coverage}/*` |
+| Builder + inline-config guards | `crates/forge/src/{multi_runner,runner}.rs` |
+| Result/state conversion | `crates/evm/core/src/evm.rs` (`convert_mega_result_and_state`) |
+| E2E tests | `crates/forge/tests/cli/megaeth.rs` |
+| Manual test fixtures | `testdata/megaeth/` (forge-std lib is gitignored) |
+| Live cross-validation CI | `.github/workflows/megaeth-live-validate.yml` (daily + on PR touching mega paths) |
+
+### Caveats when modifying MegaETH code
+
+- **`mega-evm` version is pinned.**
+  Bumping it requires updating the `MEGA_EVME_VERSION` constant in `crates/forge/tests/cli/megaeth.rs` AND the hardcoded reference values in `testdata/megaeth/test/CrossValidate.t.sol` (e.g. `MEGA_EVME_REFERENCE_GAS = 95086`).
+  Run `cargo nextest run -p forge --test cli megaeth_live_cross_validate --run-ignored=only` locally to regenerate.
+- **`--megaeth` + `--isolate` / `--fork-url` / `--gas-report` must stay rejected.**
+  Silent degradation is worse than a hard error.
+  Any new code path that builds a runner or executes tests under MegaETH must call `EvmOpts::validate_megaeth()` before any network request.
+- **Cheatcodes are skipped under `--megaeth`.**
+  Do not add `vm.*` calls to `testdata/megaeth/` tests — they appear to succeed but do nothing.
+- **System contract deployment must be idempotent.**
+  `Backend::ensure_system_contract` checks `code_hash` before writing and preserves existing `balance` / `nonce`.
+  Mirrors mega-evme's pattern — do not revert to `AccountInfo::default()`.
+- **`MegaCtx<'a, E>` is generic over the external-env provider.**
+  Defaults to `TestExternalEnvs` (empty oracle, `MIN_BUCKET_SIZE` SALT buckets).
+  A fork-backed implementation should plug in as `MegaCtx<'_, ForkExternalEnvs>` rather than replacing the alias — inspector impls are `impl<E: ExternalEnvTypes> Inspector<MegaCtx<'_, E>>`.

@@ -434,6 +434,8 @@ struct _ObjectSafe(dyn DatabaseExt);
 #[derive(Clone, Debug)]
 #[must_use]
 pub struct Backend {
+    /// Whether this backend runs with MegaETH EVM semantics.
+    pub(crate) is_megaeth: bool,
     /// The access point for managing forks
     forks: MultiFork,
     // The default in memory db
@@ -487,6 +489,7 @@ impl Backend {
         };
 
         let mut backend = Self {
+            is_megaeth: false,
             forks,
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: inner.new_journaled_state(),
@@ -528,12 +531,24 @@ impl Backend {
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
     pub fn clone_empty(&self) -> Self {
         Self {
+            is_megaeth: self.is_megaeth,
             forks: self.forks.clone(),
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             inner: Default::default(),
         }
+    }
+
+    /// Mark this backend as MegaETH-enabled.
+    ///
+    /// This is a flag read by [`crate::executors::Executor`] to dispatch to
+    /// [`Backend::inspect_mega`] instead of [`Backend::inspect`]. Calling
+    /// [`Backend::inspect`] directly ignores this flag and always runs the
+    /// stock revm path — use [`Backend::inspect_mega`] explicitly when
+    /// bypassing the executor.
+    pub fn set_megaeth(&mut self, enabled: bool) {
+        self.is_megaeth = enabled;
     }
 
     pub fn insert_account_info(&mut self, address: Address, account: AccountInfo) {
@@ -764,6 +779,9 @@ impl Backend {
 
     /// Executes the configured test call of the `env` without committing state changes.
     ///
+    /// Runs the stock revm path regardless of [`Backend::is_megaeth`]; callers that want
+    /// MegaETH semantics must route to [`Backend::inspect_mega`] themselves.
+    ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
@@ -773,6 +791,7 @@ impl Backend {
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
+
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
@@ -780,6 +799,105 @@ impl Backend {
         *env = evm.as_env_mut().to_owned();
 
         Ok(res)
+    }
+
+    /// Whether this backend is marked for MegaETH execution.
+    ///
+    /// Read by [`crate::executors::Executor`] to route to [`Backend::inspect_mega`].
+    /// [`Backend::inspect`] does not consult this flag.
+    pub fn is_megaeth(&self) -> bool {
+        self.is_megaeth
+    }
+
+    /// Execute a transaction using MegaETH EVM semantics.
+    pub fn inspect_mega<I: for<'a> revm::Inspector<crate::evm::MegaCtx<'a>>>(
+        &mut self,
+        env: &mut Env,
+        inspector: &mut I,
+    ) -> eyre::Result<ResultAndState> {
+        use crate::evm::convert_mega_result_and_state;
+        use mega_evm::{MegaContext, MegaEvm, MegaSpecId, MegaTransaction, TestExternalEnvs};
+        use revm::InspectEvm;
+
+        let spec = MegaSpecId::REX4;
+        self.deploy_mega_system_contracts(spec);
+
+        let mut mega_cfg = mega_evm::revm::context::CfgEnv::default();
+        mega_cfg.chain_id = env.evm_env.cfg_env.chain_id;
+        mega_cfg.spec = spec;
+        mega_cfg.disable_nonce_check = env.evm_env.cfg_env.disable_nonce_check;
+        mega_cfg.disable_balance_check = env.evm_env.cfg_env.disable_balance_check;
+        mega_cfg.disable_block_gas_limit = env.evm_env.cfg_env.disable_block_gas_limit;
+        mega_cfg.disable_base_fee = env.evm_env.cfg_env.disable_base_fee;
+        mega_cfg.disable_eip3607 = env.evm_env.cfg_env.disable_eip3607;
+
+        let external_envs = TestExternalEnvs::new();
+        let db: &mut dyn DatabaseExt = self;
+        let ctx = MegaContext::new(db, spec)
+            .with_cfg(mega_cfg)
+            .with_block(env.evm_env.block_env.clone())
+            .with_external_envs(external_envs.into());
+
+        let mega_tx = MegaTransaction { base: env.tx.clone(), ..Default::default() };
+        let mut evm = MegaEvm::new(ctx).with_inspector(inspector);
+        let res = evm.inspect_tx(mega_tx).map_err(|e| eyre::eyre!("MegaETH EVM error: {e}"))?;
+
+        Ok(convert_mega_result_and_state(res))
+    }
+
+    /// Deploy MegaETH system contracts (Oracle, HP Timestamp, Keyless Deploy).
+    // TODO: use `mega_evm::system_contracts(spec)` once mega-evm exposes it.
+    fn deploy_mega_system_contracts(&mut self, spec: mega_evm::MegaSpecId) {
+        use mega_evm::{
+            HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS, HIGH_PRECISION_TIMESTAMP_ORACLE_CODE,
+            HIGH_PRECISION_TIMESTAMP_ORACLE_CODE_HASH, KEYLESS_DEPLOY_ADDRESS, KEYLESS_DEPLOY_CODE,
+            KEYLESS_DEPLOY_CODE_HASH, MegaSpecId, ORACLE_CONTRACT_ADDRESS, ORACLE_CONTRACT_CODE,
+            ORACLE_CONTRACT_CODE_HASH, ORACLE_CONTRACT_CODE_HASH_REX2, ORACLE_CONTRACT_CODE_REX2,
+        };
+
+        if spec >= MegaSpecId::MINI_REX {
+            let (oracle_code, oracle_hash) = if spec >= MegaSpecId::REX2 {
+                (ORACLE_CONTRACT_CODE_REX2, ORACLE_CONTRACT_CODE_HASH_REX2)
+            } else {
+                (ORACLE_CONTRACT_CODE, ORACLE_CONTRACT_CODE_HASH)
+            };
+            self.ensure_system_contract(ORACLE_CONTRACT_ADDRESS, oracle_code, oracle_hash);
+            self.ensure_system_contract(
+                HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS,
+                HIGH_PRECISION_TIMESTAMP_ORACLE_CODE,
+                HIGH_PRECISION_TIMESTAMP_ORACLE_CODE_HASH,
+            );
+        }
+
+        if spec >= MegaSpecId::REX2 {
+            self.ensure_system_contract(
+                KEYLESS_DEPLOY_ADDRESS,
+                KEYLESS_DEPLOY_CODE,
+                KEYLESS_DEPLOY_CODE_HASH,
+            );
+        }
+
+        trace!(target: "backend", "MegaETH system contracts deployed for spec {:?}", spec);
+    }
+
+    /// Deploy `code` at `address` if not already present with the expected hash.
+    fn ensure_system_contract(
+        &mut self,
+        address: Address,
+        code: alloy_primitives::Bytes,
+        expected_hash: B256,
+    ) {
+        let existing = self.basic_ref(address).ok().flatten();
+        if let Some(ref info) = existing
+            && info.code_hash == expected_hash
+        {
+            return;
+        }
+
+        let mut info = existing.unwrap_or_default();
+        info.code_hash = expected_hash;
+        info.code = Some(Bytecode::new_raw(code));
+        self.insert_account_info(address, info);
     }
 
     /// Returns true if the address is a precompile

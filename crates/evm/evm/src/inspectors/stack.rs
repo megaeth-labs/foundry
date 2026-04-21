@@ -1202,3 +1202,175 @@ impl DerefMut for InspectorStack {
         &mut self.inner
     }
 }
+
+// MegaETH Inspector support. Cheatcodes are skipped (hardcoded to EthEvmContext
+// in upstream); all other sub-inspectors work via `impl<CTX> Inspector<CTX>`.
+
+use foundry_evm_core::evm::{ExternalEnvTypes, MegaCtx};
+
+/// Like `call_inspectors!` but for `MegaContext`, excluding cheatcodes.
+macro_rules! call_mega_inspectors {
+    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {
+        $(
+            if let Some($id) = $inspector {
+                $crate::utils::cold_path();
+                $body;
+            }
+        )+
+    };
+    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {{
+        $(
+            if let Some($id) = $inspector {
+                $crate::utils::cold_path();
+                if let Some(result) = $body {
+                    return result;
+                }
+            }
+        )+
+    }};
+}
+
+impl<E: ExternalEnvTypes> Inspector<MegaCtx<'_, E>> for InspectorStack {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>) {
+        call_mega_inspectors!(
+            [
+                &mut self.inner.line_coverage,
+                &mut self.inner.tracer,
+                // cheatcodes skipped — not supported under MegaETH yet
+                &mut self.inner.script_execution_inspector,
+                &mut self.inner.printer
+            ],
+            |inspector| inspector.initialize_interp(interpreter, ecx),
+        );
+    }
+
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>) {
+        call_mega_inspectors!(
+            [
+                &mut self.inner.fuzzer,
+                &mut self.inner.tracer,
+                &mut self.inner.line_coverage,
+                &mut self.inner.edge_coverage,
+                &mut self.inner.script_execution_inspector,
+                &mut self.inner.printer,
+                &mut self.inner.revert_diag // cheatcodes skipped
+            ],
+            |inspector| (*inspector).step(interpreter, ecx),
+        );
+    }
+
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>) {
+        call_mega_inspectors!(
+            [
+                &mut self.inner.tracer,
+                &mut self.inner.chisel_state,
+                &mut self.inner.printer,
+                &mut self.inner.revert_diag // cheatcodes skipped
+            ],
+            |inspector| (*inspector).step_end(interpreter, ecx),
+        );
+    }
+
+    // The macro fans `log` out across multiple inspectors.
+    #[allow(clippy::redundant_clone)]
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut MegaCtx<'_, E>, log: Log) {
+        call_mega_inspectors!(
+            [
+                &mut self.inner.tracer,
+                &mut self.inner.log_collector,
+                // cheatcodes skipped
+                &mut self.inner.printer
+            ],
+            |inspector| inspector.log(interpreter, ecx, log.clone()),
+        );
+    }
+
+    fn call(&mut self, ecx: &mut MegaCtx<'_, E>, call: &mut CallInputs) -> Option<CallOutcome> {
+        call_mega_inspectors!(
+            #[ret]
+            [
+                &mut self.inner.fuzzer,
+                &mut self.inner.tracer,
+                &mut self.inner.log_collector,
+                &mut self.inner.printer,
+                &mut self.inner.revert_diag
+            ],
+            |inspector| {
+                let mut out = None;
+                if let Some(output) = inspector.call(ecx, call) {
+                    out = Some(Some(output));
+                }
+                out
+            },
+        );
+
+        // cheatcodes and isolation mode skipped for MegaETH v1
+        None
+    }
+
+    fn call_end(
+        &mut self,
+        ecx: &mut MegaCtx<'_, E>,
+        inputs: &CallInputs,
+        outcome: &mut CallOutcome,
+    ) {
+        let result = outcome.result.result;
+        call_mega_inspectors!(
+            [
+                &mut self.inner.fuzzer,
+                &mut self.inner.tracer,
+                // cheatcodes skipped
+                &mut self.inner.printer,
+                &mut self.inner.revert_diag
+            ],
+            |inspector| {
+                inspector.call_end(ecx, inputs, outcome);
+            },
+        );
+
+        if result.is_revert() && self.inner.reverter.is_none() {
+            self.inner.reverter = Some(inputs.target_address);
+        }
+    }
+
+    fn create(
+        &mut self,
+        ecx: &mut MegaCtx<'_, E>,
+        create: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
+        call_mega_inspectors!(
+            #[ret]
+            [
+                &mut self.inner.tracer,
+                &mut self.inner.line_coverage // cheatcodes skipped
+            ],
+            |inspector| inspector.create(ecx, create).map(Some),
+        );
+
+        // isolation mode skipped for MegaETH v1
+        None
+    }
+
+    fn create_end(
+        &mut self,
+        ecx: &mut MegaCtx<'_, E>,
+        call: &CreateInputs,
+        outcome: &mut CreateOutcome,
+    ) {
+        call_mega_inspectors!(
+            [
+                &mut self.inner.tracer // cheatcodes skipped
+            ],
+            |inspector| {
+                inspector.create_end(ecx, call, outcome);
+            },
+        );
+    }
+
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        // Delegates to existing implementation — selfdestruct doesn't take context
+        call_mega_inspectors!([&mut self.inner.tracer], |inspector| {
+            Inspector::<MegaCtx<'_, E>>::selfdestruct(inspector, contract, target, value)
+        },);
+    }
+}

@@ -168,6 +168,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         odyssey: false,
+        megaeth: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -1045,6 +1046,7 @@ create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
 odyssey = false
+megaeth = false
 transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
@@ -1330,6 +1332,7 @@ exclude = []
   "assertions_revert": true,
   "legacy_assertions": false,
   "odyssey": false,
+  "megaeth": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
